@@ -1,0 +1,107 @@
+# Promptfoo eval 配置 — Evaluator agent
+#
+# 用法: pnpm run eval
+# 跑完会输出准确率、漏判率、错误分类的混淆矩阵。
+#
+# Evaluator 的准确率 ≥ 85% 是 MVP 上线门槛。
+# 如果不到,优化 prompts/evaluator.md 后重跑。
+
+description: "Evaluator agent quality eval"
+
+providers:
+  - id: anthropic:claude-haiku-4-5-20251001
+    config:
+      temperature: 0.3
+      max_tokens: 1000
+
+prompts:
+  - file://prompts/evaluator.md
+
+tests:
+  # 完全正确的答案
+  - vars:
+      input: |
+        {
+          "question": "化简: $3x + 5x$",
+          "correct_answer": "$8x$",
+          "answer_explanation": "同类项合并,系数相加",
+          "student_answer": "8x",
+          "common_mistakes": [],
+          "attempt_count": 1
+        }
+    assert:
+      - type: contains
+        value: '"is_correct": true'
+      - type: javascript
+        value: |
+          JSON.parse(output).error_diagnosis === null
+
+  # 完全错误
+  - vars:
+      input: |
+        {
+          "question": "化简: $3x + 5x$",
+          "correct_answer": "$8x$",
+          "answer_explanation": "同类项合并,系数相加",
+          "student_answer": "15x",
+          "common_mistakes": [
+            {"mistake": "15x", "diagnosis": "把加法当成了乘法"}
+          ],
+          "attempt_count": 1
+        }
+    assert:
+      - type: contains
+        value: '"is_correct": false'
+      - type: javascript
+        value: |
+          const r = JSON.parse(output);
+          r.error_diagnosis && r.error_diagnosis.category === 'concept_gap'
+
+  # 部分正确(过程对、计算错)
+  - vars:
+      input: |
+        {
+          "question": "化简: $3x + 5x - 2x$",
+          "correct_answer": "$6x$",
+          "answer_explanation": "$3+5-2=6$",
+          "student_answer": "7x",
+          "common_mistakes": [],
+          "attempt_count": 1
+        }
+    assert:
+      - type: contains
+        value: '"is_correct": false'
+      - type: javascript
+        value: |
+          const r = JSON.parse(output);
+          r.error_diagnosis && r.error_diagnosis.category === 'procedure_slip'
+
+  # 形式不同但等价
+  - vars:
+      input: |
+        {
+          "question": "化简: $2x + 3 + 4x$",
+          "correct_answer": "$6x + 3$",
+          "answer_explanation": "同类项合并",
+          "student_answer": "3 + 6x",
+          "common_mistakes": [],
+          "attempt_count": 1
+        }
+    assert:
+      - type: contains
+        value: '"is_correct": true'
+
+  # 第 2 次错才显示标准答案
+  - vars:
+      input: |
+        {
+          "question": "解方程: $2x = 10$",
+          "correct_answer": "$x = 5$",
+          "answer_explanation": "两边除以 2",
+          "student_answer": "x = 20",
+          "common_mistakes": [],
+          "attempt_count": 2
+        }
+    assert:
+      - type: contains
+        value: '"should_show_answer": true'
