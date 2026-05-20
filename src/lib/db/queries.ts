@@ -112,9 +112,8 @@ export async function getDueReviews(userId: string, limit = 20) {
     .from('mastery_states')
     .select('*, knowledge_nodes!inner(id, title, estimated_minutes)')
     .eq('user_id', userId)
-    .lte('due_at', new Date().toISOString())
-    .neq('fsrs_state', 'new')
-    .order('due_at')
+    .or(`due_at.lte.${new Date().toISOString()},fsrs_state.eq.new`)
+    .order('due_at', { nullsFirst: false })
     .limit(limit);
   if (error) throw error;
   return (data || []).map((row: any) => ({
@@ -122,6 +121,8 @@ export async function getDueReviews(userId: string, limit = 20) {
     title: row.knowledge_nodes.title,
     estimated_minutes: row.knowledge_nodes.estimated_minutes || 5,
     fsrs_state: row.fsrs_state,
+    due_at: row.due_at,
+    mastery_level: row.mastery_level,
   }));
 }
 

@@ -3,8 +3,13 @@
  *
  * 整合 Evaluator + FSRS + mastery 更新的核心接口。
  *
- * 输入:学生答案
- * 输出:对错 + 反馈 + 下次复习时间 + 是否解锁下一节点
+ * 流程:
+ * 1. 学生提交答案
+ * 2. 调用 Evaluator(Haiku) 判分 + 错因诊断
+ * 3. 如果正确 → 返回正向反馈
+ * 4. 如果错误第1次 → 返回引导问题 + should_retry=true
+ * 5. 如果错误第2次 → 返回完整答案 + should_show_answer=true
+ * 6. 如果是最后一题 → 触发 FSRS 调度 + 更新 mastery
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -38,10 +43,10 @@ export async function POST(req: NextRequest) {
       commonMistakes,
       attemptCount = 1,
       timeSpentSeconds = 30,
-      isLastQuestionOfNode = false, // 是不是这个 node 的最后一题(影响 FSRS 调度)
+      isLastQuestionOfNode = false,
     } = body;
 
-    // 1. 调用 Evaluator(Haiku,便宜快)
+    // 1. 调用 Evaluator (Haiku, 便宜快)
     const evalResult = await evaluateAnswer({
       question,
       correct_answer: correctAnswer,
@@ -65,11 +70,25 @@ export async function POST(req: NextRequest) {
       time_spent_seconds: timeSpentSeconds,
     });
 
-    // 3. 如果是这个 node 最后一题,触发 FSRS 调度
+    // 3. 构建返回结果
+    const response: any = {
+      evaluation: {
+        is_correct: evalResult.is_correct,
+        is_partially_correct: evalResult.is_partially_correct,
+        score: evalResult.score,
+        feedback_to_student: evalResult.feedback_to_student,
+        should_show_answer: evalResult.should_show_answer,
+        should_retry: evalResult.should_retry,
+        follow_up_question: evalResult.follow_up_question,
+        error_diagnosis: evalResult.error_diagnosis,
+      },
+    };
+
+    // 4. 如果是最后一题，触发 FSRS 调度
     if (isLastQuestionOfNode) {
       const currentMastery = await getMasteryState(userId, nodeId);
 
-      // 综合 rating(基于这次答题表现 + 之前的掌握度)
+      // 综合 rating (基于这次答题表现 + 之前的掌握度)
       const rating: PerformanceRating = evalResult.is_correct
         ? evalResult.score >= 0.95
           ? 'easy'
@@ -92,7 +111,7 @@ export async function POST(req: NextRequest) {
         mastery_level: newMastery,
       });
 
-      // 如果首次达 0.85,记录 mastery_achieved 事件
+      // 如果首次达 0.85，记录 mastery_achieved 事件
       if (oldMastery < 0.85 && newMastery >= 0.85) {
         await logEvent({
           user_id: userId,
@@ -102,19 +121,23 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      return NextResponse.json({
-        evaluation: evalResult,
-        mastery_update: {
-          old_mastery: oldMastery,
-          new_mastery: newMastery,
-          is_mastered: newMastery >= 0.85,
-          next_review_at: fsrsUpdate.due_at,
-        },
+      // 记录 quiz_completed 事件
+      await logEvent({
+        user_id: userId,
+        node_id: nodeId,
+        event_type: 'quiz_completed',
+        payload: { rating, old_mastery: oldMastery, new_mastery: newMastery },
       });
+
+      response.mastery_update = {
+        old_mastery: oldMastery,
+        new_mastery: newMastery,
+        is_mastered: newMastery >= 0.85,
+        next_review_at: fsrsUpdate.due_at,
+      };
     }
 
-    // 非最后一题:只返回 evaluation
-    return NextResponse.json({ evaluation: evalResult });
+    return NextResponse.json(response);
   } catch (err: any) {
     console.error('/api/evaluate error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
