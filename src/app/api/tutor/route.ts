@@ -9,7 +9,7 @@ import { NextRequest } from 'next/server';
 import { explainerStream } from '@/lib/ai/agents';
 import { getNode, getStudentMasteryForPrerequisites, logEvent } from '@/lib/db/queries';
 
-export const runtime = 'edge'; // 流式输出推荐 edge runtime
+export const runtime = 'nodejs'; // 需要 fs/path 模块
 
 export async function POST(req: NextRequest) {
   try {
