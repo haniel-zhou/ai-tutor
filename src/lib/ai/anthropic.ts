@@ -9,12 +9,9 @@
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  throw new Error('Missing ANTHROPIC_API_KEY env variable');
-}
-
 const anthropic = createAnthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
+  baseURL: process.env.ANTHROPIC_BASE_URL,
 });
 
 // 模型选择策略
